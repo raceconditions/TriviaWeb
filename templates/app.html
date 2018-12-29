@@ -4,18 +4,91 @@
     <title>Flask-SocketIO Test</title>
     <script type="text/javascript" src="//code.jquery.com/jquery-2.1.4.min.js"></script>
     <script type="text/javascript" src="//cdnjs.cloudflare.com/ajax/libs/socket.io/1.3.5/socket.io.min.js"></script>
+    <style>
+    .button, button, select, input[type=submit] {
+        background-color: #4CAF50;
+        border: 1px solid #4CAF50;
+        color: white;
+        padding: 15px 32px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 16px;
+        margin: 4px 2px;
+        cursor: pointer;
+    }
+    .selectedanswer {
+        border: 2px solid gray;
+    }
+    select {
+        color: #4CAF50;
+        background-color: white;
+        border: 1px solid #4CAF50;
+    }
+    input[type=text] {
+        font-size: 16px;
+        margin: 4px 2px;
+        padding: 15px 32px;
+        border: 1px solid #4CAF50;
+    }
+    h2 {
+        font-size: 16px;
+        color: #4CAF50;
+        font-family: sans-serif;
+    }
+    </style>
     <script type="text/javascript" charset="utf-8">
+        var room = '';
+        var username = '';
+        var sessionid = '';
+        var isadmin = false;
+        var count = 0;
+        var counter;
+
         $(document).ready(function(){
             namespace = '/test';
             var socket = io.connect('http://' + document.domain + ':' + location.port + namespace);
-            socket.on('connect', function() {
+            socket.on('connect', function(data) {
+                sessionid = socket.io.engine.id
                 socket.emit('my event', {data: 'I\'m connected!'});
             });
             socket.on('disconnect', function() {
+                room = '';
                 $('#log').append('<br>Disconnected');
             });
             socket.on('my response', function(msg) {
-                $('#log').append('<br>Received: ' + msg.data);
+                //$('#log').append('<br>Received: ' + msg.data);
+            });
+            socket.on('joined room', function(msg) {
+                $('#' + msg.sid).remove();
+                $('#memberslist').append('<li id="' + msg.sid + '">' + msg.username + '</li>');
+            });
+            socket.on('left room', function(msg) {
+                $('#' + msg.sid).remove();
+            });
+            socket.on('message', function(msg) {
+                $('#messages').append('<br><b>' + msg.username + '</b>: ' + msg.data);
+            });
+            socket.on('question', function(data) {
+                setCountdown(data.time);
+                console.log(data)
+                $('#question').show()
+                $('#questiontext').html(data.question);
+                $('#answers').empty();
+                answers = data.incorrect_answers
+                answers.splice(Math.floor(Math.random()*answers.length), 0, data.correct_answer)
+                for(var i = 0; i < answers.length; i++)
+                    $('#answers').append('<a class="button answer" id="' + answers[i] + '">' + answers[i] + '</li>');
+                $('.answer').click(function(event) {answerQuestion(event.target.id, data.index);});
+            });
+            socket.on('results', function(data) {
+                console.log(data)
+                $('#results').show()
+                if(isadmin)
+                    $('#restart_game').show()
+                $('#question').hide()
+                for(var i = 0; i < data.results.length; i++)
+                    $('#players').append('<div>' + data.results[i].user + ': ' + data.results[i].count + '</div>');
             });
             // event handler for server sent data
             // the data is displayed in the "Received" section of the page
@@ -30,31 +103,119 @@
                 return false;
             });
             $('form#join').submit(function(event) {
-                socket.emit('join', {room: $('#join_room').val()});
+                room = $('#join_room').val();
+                username = $('#username').val();
+                socket.emit('join', {room: room, username: username});
+                $('#join_game').hide();
+                $('#game').show();
+                return false;
+            });
+            $('form#create').submit(function(event) {
+                isadmin = true;
+                room = $('#create_room').val();
+                username = $('#username').val();
+                socket.emit('join', {room: room, username: username});
+                $.getJSON( "/categories", function( response ) {
+                    data = JSON.parse(response)
+                    for(var i = 0; i < data.trivia_categories.length; i++)
+                        $('#category').append($('<option>', { 
+                            value: data.trivia_categories[i].id,
+                            text : data.trivia_categories[i].name 
+                        }));
+                });
+                $('#create_game').hide();
+                $('#game').show();
+                $('#admin').show();
+                $('#members').show();
                 return false;
             });
             $('form#leave').submit(function(event) {
-                socket.emit('leave', {room: $('#leave_room').val()});
+                socket.emit('leave', {room: room});
+                resetGame();
                 return false;
             });
             $('form#send_room').submit(function(event) {
-                socket.emit('my room event', {room: $('#room_name').val(), data: $('#room_data').val()});
+                socket.emit('my room event', {room: room, data: $('#room_data').val()});
                 return false;
             });
             $('form#close').submit(function(event) {
-                socket.emit('close room', {room: $('#close_room').val()});
+                socket.emit('close room', {room: room});
+                leaveGame();
                 return false;
             });
             $('form#disconnect').submit(function(event) {
                 socket.emit('disconnect request');
                 return false;
             });
+
+            $('form#start').submit(function(event) {
+                socket.emit('start', {category: $('#category').val(), room: room});
+                return false;
+            });
+
+
+            $('#createGame').click(function() {
+                $('#create_game').show();
+	        $('#init').hide();
+            });
+            $('#joinGame').click(function() {
+                $('#join_game').show();
+	        $('#init').hide();
+            });
+            function leaveGame() {
+                room = '';
+                username = '';
+                $('#init').show();
+                $('#messages').empty();
+                $('#memberslist').empty();
+            }
+            function setCountdown(time) {
+                count = time;
+                clearInterval(counter);
+                counter=setInterval(timer, 1000);
+            }
+function timer()
+{
+  count=count-1;
+  if (count < 0)
+  {
+     clearInterval(counter);
+     return;
+  }
+
+ $("#timer").html(count + " secs");
+}
+
         });
+        function restartGame() {
+            $('#create_game').hide();
+            $('#game').show();
+            $('#admin').show();
+            $('#members').show();
+            $('.game').hide();
+            $('#players').empty();
+            $('#results').hide();
+            $('#questiontext').text("Waiting for game to start...");
+        }
+
+        function answerQuestion(id, index) {
+            $('.answer').removeClass('selectedanswer');
+            $('#' + id).addClass('selectedanswer');
+            $.ajax({
+                type: "POST",
+                url: "/answer", 
+                data: JSON.stringify({sid: sessionid, answer: id, room: room, index: index}),
+                success: function() {
+                    console.log(id);
+                },
+                contentType: "application/json",
+                dataType: 'json'
+            });
+        }
     </script>
 </head>
 <body>
-    <h1>Flask-SocketIO Test</h1>
-    <h2>Send:</h2>
+<!--
     <form id="emit" method="POST" action='#'>
         <input type="text" name="emit_data" id="emit_data" placeholder="Message">
         <input type="submit" value="Echo">
@@ -63,27 +224,83 @@
         <input type="text" name="broadcast_data" id="broadcast_data" placeholder="Message">
         <input type="submit" value="Broadcast">
     </form>
-    <form id="join" method="POST" action='#'>
-        <input type="text" name="join_room" id="join_room" placeholder="Room Name">
-        <input type="submit" value="Join Room">
-    </form>
-    <form id="leave" method="POST" action='#'>
-        <input type="text" name="leave_room" id="leave_room" placeholder="Room Name">
-        <input type="submit" value="Leave Room">
-    </form>
-    <form id="send_room" method="POST" action='#'>
-        <input type="text" name="room_name" id="room_name" placeholder="Room Name">
-        <input type="text" name="room_data" id="room_data" placeholder="Message">
-        <input type="submit" value="Send to Room">
-    </form>
-    <form id="close" method="POST" action="#">
-        <input type="text" name="close_room" id="close_room" placeholder="Room Name">
-        <input type="submit" value="Close Room">
-    </form>
     <form id="disconnect" method="POST" action="#">
         <input type="submit" value="Disconnect">
     </form>
+
+-->
+    <div id="init">
+        <input type="text" name="username" id="username" placeholder="Enter Your Name">
+        <button id="createGame">Create Game</button>
+        <button id="joinGame">Join Game</button>
+    </div>
+
+    <div id="create_game" style="display:none" class="game">
+        <h2>Create Game</h2>
+        <form id="create" method="POST" action='#'>
+            <input type="text" name="create_room" id="create_room" placeholder="Room Name">
+            <input type="submit" value="Create Room">
+        </form>
+    </div>
+
+    <div id="join_game" style="display:none" class="game">
+        <h2>Join Game</h2>
+        <form id="join" method="POST" action='#'>
+            <input type="text" name="join_room" id="join_room" placeholder="Room Name">
+            <input type="submit" value="Join Room">
+        </form>
+    </div>
+
+    <div id="admin" style="display:none" class="game">
+<!--
+        <form id="close" method="POST" action="#">
+            <input type="submit" value="Close Room">
+        </form>
+-->
+        <form id="start" method="POST" action="#">
+            <select id="category"></select>
+            <input type="submit" value="Start Game">
+        </form>
+    </div>
+
+    <div id="question" style="display:none" class="game">
+        <p id="questiontext">Waiting for game to start...</p>
+        <div id="answers"></div>
+        <div id="timer"></div>
+    </div>
+
+    <div id="results" style="display:none" class="game">
+        <h2>Results</h2>
+        <div id="players"></div>
+        <form id="leave" method="POST" action='#'>
+            <input type="submit" value="Leave Room">
+        </form>
+    </div>
+
+    <div id="restart_game" style="display:none" class="game">
+        <button onclick="restartGame">Restart Game</a>
+    </div>
+
+    <div id="game" style="display:none" class="game">
+        <div id="members">
+            <h2>Members</h2>
+            <ul id="memberslist"></ul>
+        </div>
+
+        <div id="messages">
+            <h2>Messages</h2>
+
+            <form id="send_room" method="POST" action='#'>
+                <input type="text" name="room_data" id="room_data" placeholder="Message">
+                <input type="submit" value="Send to Room">
+            </form>
+        </div>
+    </div>
+
+
+<!--
     <h2>Receive:</h2>
     <div><p id="log"></p></div>
+-->
 </body>
 </html>
